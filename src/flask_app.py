@@ -773,7 +773,7 @@ class FaceRecognitionApp:
                 
                 # Generate filename
                 today_str = date.today().strftime('%Y-%m-%d')
-                filename = f'BEACON_2025_Attendance_{today_str}.xlsx'
+                filename = f'Marino_2025_Attendance_{today_str}.xlsx'
                 
                 return send_file(
                     output,
