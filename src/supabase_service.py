@@ -476,76 +476,90 @@ class SupabaseService:
     def get_all_users_with_profiles(self) -> Optional[List[Dict]]:
         """Get all users with their profile information - works with UserDetails and UserAccounts tables"""
         try:
-            logger.info("Fetching users using actual database schema (UserDetails + UserAccounts)")
-            
+            logger.info("Fetching users using actual database schema (UserDetails + UserAccounts) with pagination")
+
+            def fetch_all_rows(table_name):
+                all_rows = []
+                page_size = 1000
+                offset = 0
+                while True:
+                    response = self.supabase.table(table_name).select('*').range(offset, offset + page_size - 1).execute()
+                    if not response.data:
+                        break
+                    all_rows.extend(response.data)
+                    if len(response.data) < page_size:
+                        break
+                    offset += page_size
+                return all_rows
+
             # Get user details (names, face images, etc.)
-            user_details_response = self.supabase.table('UserDetails').select('*').execute()
-            user_details_by_id = {detail['id']: detail for detail in user_details_response.data}
-            
+            user_details_rows = fetch_all_rows('UserDetails')
+            user_details_by_id = {detail['id']: detail for detail in user_details_rows}
+
             # Get user accounts (email, phone, etc.)
-            user_accounts_response = self.supabase.table('UserAccounts').select('*').execute()
-            user_accounts_by_id = {account['id']: account for account in user_accounts_response.data}
-            
+            user_accounts_rows = fetch_all_rows('UserAccounts')
+            user_accounts_by_id = {account['id']: account for account in user_accounts_rows}
+
             # Also check if we have additional data from visitors table
             visitors_data = {}
             try:
-                visitors_response = self.supabase.table('visitors').select('*').execute()
-                visitors_data = {visitor['userId']: visitor for visitor in visitors_response.data if visitor.get('userId')}
+                visitors_rows = fetch_all_rows('visitors')
+                visitors_data = {visitor['userId']: visitor for visitor in visitors_rows if visitor.get('userId')}
                 logger.info(f"Found {len(visitors_data)} visitor records")
             except Exception as e:
                 logger.info(f"No visitor data available: {e}")
-            
+
             # Check conference registrations for additional company info
             conference_data = {}
             try:
-                conference_response = self.supabase.table('conferences').select('*').execute()
-                conference_data = {conf['userId']: conf for conf in conference_response.data}
+                conference_rows = fetch_all_rows('conferences')
+                conference_data = {conf['userId']: conf for conf in conference_rows}
                 logger.info(f"Found {len(conference_data)} conference registrations")
             except Exception as e:
                 logger.info(f"No conference data available: {e}")
-            
+
             # Combine all user data
             users = []
             all_user_ids = set(user_details_by_id.keys()) | set(user_accounts_by_id.keys())
-            
+
             # Get all valid User IDs from the User table to ensure we only include users that exist in the main User table
-            valid_user_response = self.supabase.table('User').select('id').execute()
-            valid_user_ids = set(user['id'] for user in valid_user_response.data)
+            valid_user_rows = fetch_all_rows('User')
+            valid_user_ids = set(user['id'] for user in valid_user_rows)
             logger.info(f"Found {len(valid_user_ids)} valid users in User table")
-            
+
             for user_id in all_user_ids:
                 # CRITICAL: Only include users that exist in the User table
                 if user_id not in valid_user_ids:
                     logger.debug(f"Skipping user {user_id} - not found in User table")
                     continue
-                    
+
                 user_detail = user_details_by_id.get(user_id, {})
                 user_account = user_accounts_by_id.get(user_id, {})
                 visitor_info = visitors_data.get(user_id, {})
                 conference_info = conference_data.get(user_id, {})
-                
+
                 # Extract name from JSONB field in UserDetails
                 name_data = user_detail.get('name', {})
-                
+
                 # Determine user type
                 user_type = user_detail.get('userType', 'attendee')
                 if not user_type and visitor_info:
                     user_type = 'VISITOR'
-                    
+
                 # Get company info from various sources
                 company_name = (
                     conference_info.get('companyName') or 
                     visitor_info.get('companyName') or 
                     ''
                 )
-                
+
                 job_title = (
                     user_detail.get('userRole') or
                     conference_info.get('jobTitle') or 
                     visitor_info.get('jobTitle') or 
                     ''
                 )
-                
+
                 user_data = {
                     'id': user_id,
                     'email': user_account.get('email', ''),
@@ -559,31 +573,44 @@ class SupabaseService:
                     'mobileNumber': user_detail.get('phone', ''),
                     'status': user_account.get('status', 'ACTIVE')
                 }
-                
+
                 # Only include users with at least basic info
                 if user_data['firstName'] or user_data['lastName'] or user_data['email']:
                     users.append(user_data)
-            
+
             logger.info(f"Retrieved {len(users)} users from combined UserDetails and UserAccounts tables")
-            
+
             if users:
                 # Log sample user for debugging
                 sample_user = users[0]
                 logger.info(f"Sample user: {sample_user['firstName']} {sample_user['lastName']} ({sample_user['email']}) - Face URL: {'Yes' if sample_user['faceScannedUrl'] else 'No'}")
-            
+
             return users
-            
+
         except Exception as e:
             logger.error(f"Error getting users with profiles: {e}")
             logger.info("Attempting fallback to attendance table for user data...")
-            
+
             # Fallback: Get unique users from attendance table
             try:
-                attendance_response = self.supabase.table('attendance').select('*').execute()
-                
+                def fetch_all_attendance():
+                    all_rows = []
+                    page_size = 1000
+                    offset = 0
+                    while True:
+                        response = self.supabase.table('attendance').select('*').range(offset, offset + page_size - 1).execute()
+                        if not response.data:
+                            break
+                        all_rows.extend(response.data)
+                        if len(response.data) < page_size:
+                            break
+                        offset += page_size
+                    return all_rows
+                attendance_rows = fetch_all_attendance()
+
                 # Get unique users from attendance records
                 users_from_attendance = {}
-                for record in attendance_response.data:
+                for record in attendance_rows:
                     user_id = record['userid']
                     if user_id not in users_from_attendance:
                         users_from_attendance[user_id] = {
@@ -597,11 +624,11 @@ class SupabaseService:
                             'jobTitle': record.get('jobtitle', ''),
                             'faceScannedUrl': '',  # Not available in attendance table
                         }
-                
+
                 users = list(users_from_attendance.values())
                 logger.info(f"Fallback: Retrieved {len(users)} users from attendance table")
                 return users
-                
+
             except Exception as fallback_error:
                 logger.error(f"Fallback also failed: {fallback_error}")
                 return None
