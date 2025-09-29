@@ -215,15 +215,15 @@ class ArcFaceService:
             query_embedding = self.extract_face_embedding(image)
             if query_embedding is None:
                 return None
-            
+
             best_match = None
             best_similarity = 0.0
-            
+
             # Compare with all registered faces
             for user_id, data in self.face_database.items():
                 stored_embedding = data['embedding']
                 similarity = self.calculate_similarity(query_embedding, stored_embedding)
-                
+
                 if similarity > best_similarity and similarity > self.similarity_threshold:
                     best_similarity = similarity
                     best_match = {
@@ -231,9 +231,33 @@ class ArcFaceService:
                         'user_data': data['user_data'],
                         'similarity': similarity
                     }
-            
+
+            # Log recognition event to database if match found and supabase_service is available
+            if best_match and self.supabase_service:
+                try:
+                    recognition_data = {
+                        'session_id': None,  # You can pass a session id if available
+                        'recognized_user_detail_id': best_match['user_id'],
+                        'recognized_user_id': best_match['user_data'].get('userId', best_match['user_id']),
+                        'similarity_score': best_match['similarity'],
+                        'threshold_used': self.similarity_threshold,
+                        'candidates_count': len(self.face_database),
+                        'recognition_status': 'success',
+                        'error_message': None,
+                        'processing_time_ms': None,
+                        'image_metadata': {},
+                        'all_similarities': {},
+                        'attendance_marked': False,
+                        'attendance_id': None,
+                        'ip_address': None,
+                        'user_agent': None
+                    }
+                    self.supabase_service.log_face_recognition(recognition_data)
+                except Exception as log_error:
+                    logger.error(f"Error logging face recognition: {log_error}")
+
             return best_match
-            
+
         except Exception as e:
             logger.error(f"Error recognizing face: {e}")
             return None
