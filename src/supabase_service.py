@@ -639,77 +639,84 @@ class SupabaseService:
         
         for attempt in range(max_retries):
             try:
-                # Use Philippine timezone for consistent local time
                 ph_now = self.get_ph_datetime()
                 today = ph_now.date().isoformat()
-                # Convert Philippine time to UTC for proper database storage
                 utc_now = ph_now.astimezone(timezone.utc)
-                current_time = utc_now.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] + '+00'  # Store as UTC with timezone indicator
+                current_time = utc_now.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] + '+00'
                 
-                # First, verify that the user exists in the User table (for foreign key constraint)
+                # Check if user exists in User table (PascalCase)
                 user_check = self.supabase.table('User').select('id').eq('id', user_id).execute()
                 if not user_check.data:
-                    logger.warning(f"User {user_id} not found in User table - skipping attendance marking")
+                    logger.warning(f"❌ User {user_id} not found in User table - skipping attendance marking")
                     return {
                         'success': True,
                         'message': f'Welcome {user_data.get("firstName", "")} {user_data.get("lastName", "")}! Recognition successful.',
                         'existing': False,
-                        'skip_display': True  # Don't show this in attendance list since we can't mark attendance
+                        'skip_display': True
                     }
                 
-                # Check if user already marked attendance today
+                logger.info(f"✅ User {user_id} exists in User table")
+                
+                # Check if user already marked attendance today (lowercase columns)
                 existing_attendance = self.supabase.table('attendance').select('*').eq('userid', user_id).eq('scandate', today).execute()
                 
                 if existing_attendance.data:
+                    logger.info(f"ℹ️ User {user_id} already checked in today")
                     return {
                         'success': True,
                         'message': f"Welcome back! You already checked in today at {existing_attendance.data[0].get('scantime')}",
                         'existing': True,
                         'attendance_time': existing_attendance.data[0].get('scantime'),
-                        'skip_display': True  # Don't show duplicate in attendance list
+                        'skip_display': True
                     }
                 
-                # Insert new attendance record with face recognition marker
+                # Insert new attendance record (lowercase columns as per schema)
                 attendance_data = {
-                    'userid': user_id,
-                    'firstname': user_data.get('firstName', ''),
-                    'lastname': user_data.get('lastName', ''),
+                    'userid': user_id,           # lowercase
+                    'firstname': user_data.get('firstName', ''),   # lowercase
+                    'lastname': user_data.get('lastName', ''),     # lowercase
                     'email': user_data.get('email', ''),
-                    'usertype': user_data.get('userType', 'PARTICIPANT'),
+                    'usertype': user_data.get('userType', 'PARTICIPANT'),  # lowercase
                     'company': user_data.get('companyName', ''),
-                    'jobtitle': user_data.get('jobTitle', ''),
-                    'scantime': current_time,
-                    'scandate': today,
+                    'jobtitle': user_data.get('jobTitle', ''),     # lowercase
+                    'scantime': current_time,    # lowercase
+                    'scandate': today,           # lowercase
                     'status': 'PRESENT'
                 }
                 
+                logger.info(f"📝 Inserting attendance data: {attendance_data}")
+                
                 response = self.supabase.table('attendance').insert(attendance_data).execute()
                 
-                logger.info(f"NEW attendance marked for user {user_id} - {user_data.get('firstName', '')} {user_data.get('lastName', '')} via face recognition (attempt {attempt + 1})")
+                if response.data:
+                    logger.info(f"✅✅✅ ATTENDANCE SUCCESSFULLY SAVED!")
+                    logger.info(f"   User: {user_data.get('firstName', '')} {user_data.get('lastName', '')}")
+                    logger.info(f"   Time: {current_time}")
+                    logger.info(f"   Response: {response.data}")
+                
                 return {
                     'success': True,
                     'message': 'Welcome! Attendance marked successfully',
                     'existing': False,
                     'attendance_time': current_time,
-                    'skip_display': False  # New attendance should be displayed
+                    'skip_display': False
                 }
                 
             except Exception as e:
                 error_msg = str(e)
+                logger.error(f"❌ ERROR marking attendance: {error_msg}")
+                logger.exception(e)
                 
-                # Check if it's an SSL/network error that should be retried
                 if ("SSL" in error_msg or "timeout" in error_msg.lower() or "connection" in error_msg.lower()) and attempt < max_retries - 1:
-                    logger.warning(f"Network/SSL error marking attendance on attempt {attempt + 1}/{max_retries}, retrying in 2 seconds... Error: {error_msg}")
+                    logger.warning(f"Network/SSL error on attempt {attempt + 1}/{max_retries}, retrying in 2 seconds...")
                     time.sleep(2)
                     continue
                 else:
-                    logger.error(f"Error marking attendance (final attempt): {error_msg}")
                     return {
                         'success': False,
                         'message': f'Error marking attendance: {error_msg}'
                     }
         
-        # If we get here, all retries failed
         return {
             'success': False,
             'message': 'Failed to mark attendance - network connectivity issues'
@@ -721,45 +728,37 @@ class SupabaseService:
         
         for attempt in range(max_retries):
             try:
-                # Use Philippine timezone for consistent local date
                 today = self.get_ph_date().isoformat()
                 
                 query = self.supabase.table('attendance').select('*').eq('scandate', today)
-
-                # Filter records with complete user data (face recognition typically has all fields)
                 query = query.neq('firstname', '').neq('lastname', '').neq('email', '')
                 
                 response = query.order('scantime', desc=True).execute()
                 
-                # Additional filtering to ensure only face recognition records
                 face_recognition_records = []
                 for record in response.data:
                     if (record.get('firstname') and 
                         record.get('lastname') and 
                         record.get('email') and
                         record.get('userid')):
-                        # Convert scantime to Philippine timezone for display
                         if record.get('scantime'):
                             record['scanTime'] = self.convert_utc_to_ph_time(record['scantime'])
                         face_recognition_records.append(record)
                 
-                logger.info(f"Retrieved {len(face_recognition_records)} face recognition attendance records for today (attempt {attempt + 1})")
+                logger.info(f"Retrieved {len(face_recognition_records)} attendance records for today")
                 return face_recognition_records
                 
             except Exception as e:
                 error_msg = str(e)
                 
-                # Check if it's an SSL/network error that should be retried
                 if ("SSL" in error_msg or "timeout" in error_msg.lower() or "connection" in error_msg.lower()) and attempt < max_retries - 1:
-                    logger.warning(f"Network/SSL error getting today's attendance on attempt {attempt + 1}/{max_retries}, retrying in 2 seconds... Error: {error_msg}")
+                    logger.warning(f"Network error on attempt {attempt + 1}/{max_retries}, retrying...")
                     time.sleep(2)
                     continue
                 else:
-                    logger.error(f"Error getting today's face recognition attendance (final attempt): {error_msg}")
+                    logger.error(f"Error getting today's attendance: {error_msg}")
                     return []
-        
-        # If we get here, all retries failed
-        logger.error("All retry attempts failed for get_today_attendance")
+
         return []
     
     def get_attendance_stats(self) -> Dict:
