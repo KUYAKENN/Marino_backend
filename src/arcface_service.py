@@ -209,9 +209,7 @@ class ArcFaceService:
             return 0.0
     
     def recognize_face_from_image(self, image: np.ndarray) -> Optional[Dict]:
-        """Recognize face from image"""
         try:
-            # Extract embedding from input image
             query_embedding = self.extract_face_embedding(image)
             if query_embedding is None:
                 return None
@@ -219,7 +217,6 @@ class ArcFaceService:
             best_match = None
             best_similarity = 0.0
 
-            # Compare with all registered faces
             for user_id, data in self.face_database.items():
                 stored_embedding = data['embedding']
                 similarity = self.calculate_similarity(query_embedding, stored_embedding)
@@ -227,18 +224,24 @@ class ArcFaceService:
                 if similarity > best_similarity and similarity > self.similarity_threshold:
                     best_similarity = similarity
                     best_match = {
-                        'user_id': user_id,
+                        'user_id': user_id,  # This should be the User.id
                         'user_data': data['user_data'],
                         'similarity': similarity
                     }
 
-            # Log recognition event to database and mark attendance if match found and supabase_service is available
             if best_match and self.supabase_service:
                 try:
+                    # ADD DEBUG LOGGING HERE
+                    logger.info(f"Attempting to mark attendance for user_id: {best_match['user_id']}")
+                    logger.info(f"User data: {best_match['user_data']}")
+                    
+                    # Ensure we're using the correct User.id
+                    actual_user_id = best_match['user_id']  # This is UserDetails.id which equals User.id
+                    
                     recognition_data = {
                         'session_id': None,
                         'recognized_user_detail_id': best_match['user_id'],
-                        'recognized_user_id': best_match['user_data'].get('userid', best_match['user_id']),
+                        'recognized_user_id': actual_user_id,  # Make sure this is the User.id
                         'similarity_score': best_match['similarity'],
                         'threshold_used': self.similarity_threshold,
                         'candidates_count': len(self.face_database),
@@ -252,20 +255,27 @@ class ArcFaceService:
                         'ip_address': None,
                         'user_agent': None
                     }
-                    self.supabase_service.log_face_recognition(recognition_data)
+                    
+                    # Log recognition
+                    log_result = self.supabase_service.log_face_recognition(recognition_data)
+                    logger.info(f"Recognition log result: {log_result}")
 
-                    # Mark attendance in the database
-                    self.supabase_service.mark_attendance(
-                        best_match['user_id'],
+                    # Mark attendance
+                    attendance_result = self.supabase_service.mark_attendance(
+                        actual_user_id,  # This must be User.id
                         best_match['user_data']
                     )
+                    logger.info(f"Attendance mark result: {attendance_result}")
+                    
                 except Exception as log_error:
                     logger.error(f"Error logging face recognition or marking attendance: {log_error}")
+                    logger.exception(log_error)  # This will print the full stack trace
 
             return best_match
 
         except Exception as e:
             logger.error(f"Error recognizing face: {e}")
+            logger.exception(e)
             return None
     
     def recognize_face_from_base64(self, base64_image: str) -> Optional[Dict]:
