@@ -644,10 +644,24 @@ class SupabaseService:
                 utc_now = ph_now.astimezone(timezone.utc)
                 current_time = utc_now.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] + '+00'
                 
-                # Check if user exists in User table (PascalCase)
+                print("\n" + "="*80)
+                print("MARK ATTENDANCE CALLED")
+                print(f"User ID: {user_id}")
+                print(f"Today's date: {today}")
+                print(f"Current time (UTC): {current_time}")
+                print("="*80 + "\n")
+                
+                logger.info("MARK ATTENDANCE CALLED")
+                logger.info(f"User ID: {user_id}")
+                
+                # Check if user exists in User table
+                print(f"Checking if user {user_id} exists in User table...")
                 user_check = self.supabase.table('User').select('id').eq('id', user_id).execute()
+                print(f"User check data: {user_check.data}")
+                
                 if not user_check.data:
-                    logger.warning(f"❌ User {user_id} not found in User table - skipping attendance marking")
+                    print(f"❌ User {user_id} NOT FOUND in User table\n")
+                    logger.warning(f"User {user_id} NOT FOUND in User table")
                     return {
                         'success': True,
                         'message': f'Welcome {user_data.get("firstName", "")} {user_data.get("lastName", "")}! Recognition successful.',
@@ -655,44 +669,66 @@ class SupabaseService:
                         'skip_display': True
                     }
                 
-                logger.info(f"✅ User {user_id} exists in User table")
+                print(f"✅ User {user_id} EXISTS in User table\n")
                 
-                # Check if user already marked attendance today (lowercase columns)
+                # Check existing attendance
+                print(f"Checking existing attendance for {user_id} on {today}...")
                 existing_attendance = self.supabase.table('attendance').select('*').eq('userid', user_id).eq('scandate', today).execute()
+                print(f"Existing records: {len(existing_attendance.data)}\n")
                 
                 if existing_attendance.data:
-                    logger.info(f"ℹ️ User {user_id} already checked in today")
+                    print(f"ℹ️  User already checked in today\n")
                     return {
                         'success': True,
-                        'message': f"Welcome back! You already checked in today at {existing_attendance.data[0].get('scantime')}",
+                        'message': f"Welcome back! You already checked in today",
                         'existing': True,
                         'attendance_time': existing_attendance.data[0].get('scantime'),
                         'skip_display': True
                     }
                 
-                # Insert new attendance record (lowercase columns as per schema)
+                # Prepare data
                 attendance_data = {
-                    'userid': user_id,           # lowercase
-                    'firstname': user_data.get('firstName', ''),   # lowercase
-                    'lastname': user_data.get('lastName', ''),     # lowercase
+                    'userid': user_id,
+                    'firstname': user_data.get('firstName', ''),
+                    'lastname': user_data.get('lastName', ''),
                     'email': user_data.get('email', ''),
-                    'usertype': user_data.get('userType', 'PARTICIPANT'),  # lowercase
+                    'usertype': user_data.get('userType', 'PARTICIPANT'),
                     'company': user_data.get('companyName', ''),
-                    'jobtitle': user_data.get('jobTitle', ''),     # lowercase
-                    'scantime': current_time,    # lowercase
-                    'scandate': today,           # lowercase
+                    'jobtitle': user_data.get('jobTitle', ''),
+                    'scantime': current_time,
+                    'scandate': today,
                     'status': 'PRESENT'
                 }
                 
-                logger.info(f"📝 Inserting attendance data: {attendance_data}")
+                print("="*80)
+                print("📋 ATTENDANCE DATA TO BE SAVED:")
+                print(f"   userid:    {attendance_data['userid']}")
+                print(f"   firstname: {attendance_data['firstname']}")
+                print(f"   lastname:  {attendance_data['lastname']}")
+                print(f"   email:     {attendance_data['email']}")
+                print(f"   usertype:  {attendance_data['usertype']}")
+                print(f"   company:   {attendance_data['company']}")
+                print(f"   jobtitle:  {attendance_data['jobtitle']}")
+                print(f"   scantime:  {attendance_data['scantime']}")
+                print(f"   scandate:  {attendance_data['scandate']}")
+                print(f"   status:    {attendance_data['status']}")
+                print("="*80 + "\n")
                 
+                print("💾 Inserting into database...")
                 response = self.supabase.table('attendance').insert(attendance_data).execute()
                 
+                print("\n" + "="*80)
+                print("📊 DATABASE RESPONSE:")
+                print(f"Response data: {response.data}")
+                print("="*80 + "\n")
+                
                 if response.data:
-                    logger.info(f"✅✅✅ ATTENDANCE SUCCESSFULLY SAVED!")
-                    logger.info(f"   User: {user_data.get('firstName', '')} {user_data.get('lastName', '')}")
-                    logger.info(f"   Time: {current_time}")
-                    logger.info(f"   Response: {response.data}")
+                    print("✅ ATTENDANCE SAVED SUCCESSFULLY!")
+                    print(f"   Record ID: {response.data[0].get('id')}")
+                    print(f"   Name: {response.data[0].get('firstname')} {response.data[0].get('lastname')}")
+                    print(f"   Time: {response.data[0].get('scantime')}\n")
+                else:
+                    print("❌ No data returned from insert\n")
                 
                 return {
                     'success': True,
@@ -703,23 +739,25 @@ class SupabaseService:
                 }
                 
             except Exception as e:
-                error_msg = str(e)
-                logger.error(f"❌ ERROR marking attendance: {error_msg}")
+                print("\n" + "="*80)
+                print("❌ EXCEPTION OCCURRED")
+                print(f"Error: {str(e)}")
+                print("="*80 + "\n")
                 logger.exception(e)
                 
-                if ("SSL" in error_msg or "timeout" in error_msg.lower() or "connection" in error_msg.lower()) and attempt < max_retries - 1:
-                    logger.warning(f"Network/SSL error on attempt {attempt + 1}/{max_retries}, retrying in 2 seconds...")
+                if ("SSL" in str(e) or "timeout" in str(e).lower()) and attempt < max_retries - 1:
+                    print(f"⚠️  Retrying... (attempt {attempt + 2}/{max_retries})\n")
                     time.sleep(2)
                     continue
                 else:
                     return {
                         'success': False,
-                        'message': f'Error marking attendance: {error_msg}'
+                        'message': f'Error marking attendance: {str(e)}'
                     }
         
         return {
             'success': False,
-            'message': 'Failed to mark attendance - network connectivity issues'
+            'message': 'Failed after all retries'
         }
     
     def get_today_attendance(self) -> List[Dict]:
