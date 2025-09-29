@@ -212,6 +212,7 @@ class ArcFaceService:
         try:
             query_embedding = self.extract_face_embedding(image)
             if query_embedding is None:
+                logger.error("No face detected in image")
                 return None
 
             best_match = None
@@ -224,24 +225,38 @@ class ArcFaceService:
                 if similarity > best_similarity and similarity > self.similarity_threshold:
                     best_similarity = similarity
                     best_match = {
-                        'user_id': user_id,  # This should be the User.id
+                        'user_id': user_id,
                         'user_data': data['user_data'],
                         'similarity': similarity
                     }
 
             if best_match and self.supabase_service:
                 try:
-                    # ADD DEBUG LOGGING HERE
-                    logger.info(f"Attempting to mark attendance for user_id: {best_match['user_id']}")
-                    logger.info(f"User data: {best_match['user_data']}")
+                    actual_user_id = best_match['user_id']
                     
-                    # Ensure we're using the correct User.id
-                    actual_user_id = best_match['user_id']  # This is UserDetails.id which equals User.id
+                    logger.info("="*80)
+                    logger.info(f"FACE RECOGNIZED!")
+                    logger.info(f"User ID: {actual_user_id}")
+                    logger.info(f"Name: {best_match['user_data'].get('firstName')} {best_match['user_data'].get('lastName')}")
+                    logger.info(f"Similarity: {best_match['similarity']:.4f}")
+                    logger.info("="*80)
                     
+                    # Verify user exists
+                    user_check = self.supabase_service.supabase.table('User').select('id').eq('id', actual_user_id).execute()
+                    logger.info(f"User table check result: {user_check.data}")
+                    
+                    if not user_check.data:
+                        logger.error(f"CRITICAL: User {actual_user_id} NOT FOUND in User table!")
+                        logger.error(f"Cannot save attendance - foreign key constraint will fail")
+                        return best_match
+                    
+                    logger.info(f"User {actual_user_id} EXISTS in User table - proceeding")
+                    
+                    # Log recognition
                     recognition_data = {
                         'session_id': None,
                         'recognized_user_detail_id': best_match['user_id'],
-                        'recognized_user_id': actual_user_id,  # Make sure this is the User.id
+                        'recognized_user_id': actual_user_id,
                         'similarity_score': best_match['similarity'],
                         'threshold_used': self.similarity_threshold,
                         'candidates_count': len(self.face_database),
@@ -256,20 +271,25 @@ class ArcFaceService:
                         'user_agent': None
                     }
                     
-                    # Log recognition
                     log_result = self.supabase_service.log_face_recognition(recognition_data)
-                    logger.info(f"Recognition log result: {log_result}")
+                    logger.info(f"Recognition log: {log_result}")
 
                     # Mark attendance
+                    logger.info(f"Calling mark_attendance for user {actual_user_id}...")
                     attendance_result = self.supabase_service.mark_attendance(
-                        actual_user_id,  # This must be User.id
+                        actual_user_id,
                         best_match['user_data']
                     )
-                    logger.info(f"Attendance mark result: {attendance_result}")
+                    logger.info(f"Attendance result: {attendance_result}")
+                    
+                    if attendance_result.get('success'):
+                        logger.info("ATTENDANCE SAVED SUCCESSFULLY!")
+                    else:
+                        logger.error(f"ATTENDANCE FAILED: {attendance_result.get('message')}")
                     
                 except Exception as log_error:
-                    logger.error(f"Error logging face recognition or marking attendance: {log_error}")
-                    logger.exception(log_error)  # This will print the full stack trace
+                    logger.error(f"Error in recognition/attendance: {log_error}")
+                    logger.exception(log_error)
 
             return best_match
 
