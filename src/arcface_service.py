@@ -238,7 +238,7 @@ class ArcFaceService:
                     recognition_data = {
                         'session_id': None,
                         'recognized_user_detail_id': best_match['user_id'],
-                        'recognized_user_id': best_match['user_data'].get('userId', best_match['user_id']),
+                        'recognized_user_id': best_match['user_data'].get('userid', best_match['user_id']),
                         'similarity_score': best_match['similarity'],
                         'threshold_used': self.similarity_threshold,
                         'candidates_count': len(self.face_database),
