@@ -232,11 +232,11 @@ class ArcFaceService:
                         'similarity': similarity
                     }
 
-            # Log recognition event to database if match found and supabase_service is available
+            # Log recognition event to database and mark attendance if match found and supabase_service is available
             if best_match and self.supabase_service:
                 try:
                     recognition_data = {
-                        'session_id': None,  # You can pass a session id if available
+                        'session_id': None,
                         'recognized_user_detail_id': best_match['user_id'],
                         'recognized_user_id': best_match['user_data'].get('userId', best_match['user_id']),
                         'similarity_score': best_match['similarity'],
@@ -253,8 +253,14 @@ class ArcFaceService:
                         'user_agent': None
                     }
                     self.supabase_service.log_face_recognition(recognition_data)
+
+                    # Mark attendance in the database
+                    self.supabase_service.mark_attendance(
+                        best_match['user_id'],
+                        best_match['user_data']
+                    )
                 except Exception as log_error:
-                    logger.error(f"Error logging face recognition: {log_error}")
+                    logger.error(f"Error logging face recognition or marking attendance: {log_error}")
 
             return best_match
 
